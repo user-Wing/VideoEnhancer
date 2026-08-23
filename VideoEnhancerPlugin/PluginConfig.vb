@@ -12,9 +12,9 @@ Namespace videoenhancer
         Public Property Enabled As Boolean = False
         ''' <summary>超分开关：是否将"加入编码队列"hook 到 videoenhancer.exe 中转。</summary>
         Public Property UpscaleEnabled As Boolean = True
-        ''' <summary>补帧开关：启用 RIFE 补帧，可与超分组合。</summary>
+        ''' <summary>补帧开关：启用 RIFE、GIMM-VFI 或 GMFSS，可与超分组合。</summary>
         Public Property InterpEnabled As Boolean = False
-        ''' <summary>补帧模型：ncnn 为 models\RIFE 下的子文件夹名（如 rife-v4.25），cuda 为 .pth 文件名（如 rife46）。</summary>
+        ''' <summary>补帧模型：保存相对 models\Frame-Interpolation 的架构/模型路径。</summary>
         Public Property InterpModel As String = ""
         ''' <summary>补帧倍率（RIFE --interpolate_factor，默认 2；须为大于 1 的数字）。</summary>
         Public Property InterpFactor As Double = 2.0
@@ -24,9 +24,9 @@ Namespace videoenhancer
         Public Property SceneDetectThreshold As Double = 4.0
         ''' <summary>超分分块边长；0 表示使用 RVE 默认处理，不按显存自动试探。</summary>
         Public Property UpscaleTileSize As Integer = 0
-        ''' <summary>超分推理后端：ncnn、cuda、tensorrt、onnx 或 flashvsr。</summary>
+        ''' <summary>超分推理后端：ncnn、cuda、tensorrt、onnx、flashvsr 或 basicvsrpp。</summary>
         Public Property Backend As String = "ncnn"
-        ''' <summary>RIFE 补帧后端：ncnn、cuda（PyTorch）或 tensorrt。</summary>
+        ''' <summary>补帧后端：RIFE 可用 ncnn/cuda/tensorrt；GIMM-VFI 与 GMFSS 仅用 cuda。</summary>
         Public Property InterpBackend As String = "ncnn"
         ''' <summary>组合处理顺序：upscale-first（画质优先，默认）或 interp-first（速度/算力优先）。</summary>
         Public Property ProcessOrder As String = "upscale-first"

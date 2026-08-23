@@ -21,7 +21,7 @@ $winRef = Get-ChildItem 'C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.
 $winRef = Join-Path $winRef.FullName 'ref\net10.0'
 if (-not (Test-Path $netRef) -or -not (Test-Path $winRef)) { throw "net10 ref packs not found" }
 
-$hostBin = 'C:\Users\ARXChem\Documents\LakeUIApps\FFmpegFreeUI\FFmpegFreeUI\bin\Debug\net10.0-windows10.0.26100.0'
+$hostBin = 'C:\Users\ARXChem\Documents\LakeUI-2\FFmpegFreeUI\FFmpegFreeUI\bin\Debug\net10.0-windows10.0.26100.0'
 if (-not (Test-Path (Join-Path $hostBin 'FFmpegFreeUI.dll')) -or -not (Test-Path (Join-Path $hostBin 'LakeUI.dll'))) {
     throw "host assemblies not found: $hostBin"
 }
@@ -56,7 +56,7 @@ if ($LASTEXITCODE -ne 0) { throw 'vbc compile failed' }
 $dll = Join-Path $outDir 'videoenhancer.dll'
 $releaseDll = Join-Path (Split-Path -Parent $scriptDir) 'videoenhancer.3fui.dll'
 Copy-Item $dll $releaseDll -Force
-$pluginDir = 'C:\Users\ARXChem\Documents\LakeUIApps\Video Enhancer GUI\Plugin'
+$pluginDir = 'C:\PortableSoft\FFmpegFreeUI ReadyToRun x64\plugin'
 try {
     New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
     Copy-Item $dll (Join-Path $pluginDir 'videoenhancer.3fui.dll') -Force

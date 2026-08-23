@@ -36,8 +36,8 @@ videoenhancer.exe -i <输入视频> -no-upscale -backend cuda -interp-model <CUD
 ```
 
 - `-i` / `--input`：输入视频路径，含空格时加双引号。
-- `-modelpath` / `--modelpath` / `--model`：放大模型（完整路径 / models 下相对路径 / 模型名），省略用默认模型。NCNN、CUDA、TensorRT 都会递归搜索 `models` 的分类子目录，并排除独立的 `models\RIFE` 补帧目录；配合 `-no-upscale` 时可不提供（仅补帧模式）。
-- `-interp-model` / `--interp-model`：补帧模型（RIFE，位于 `models\RIFE\<子文件夹>`，如 `rife-v4.25`，含 `flownet.param` / `flownet.bin`）；可与 `-modelpath` 同时使用（先补帧后放大）；`-backend cuda` 时改为 `.pth` 模型文件名（如 `rife46`）。
+- `-modelpath` / `--modelpath` / `--model`：放大模型（完整路径 / models 下相对路径 / 模型名），省略用默认模型。NCNN、CUDA、TensorRT 都会递归搜索 `models` 的分类子目录，并排除独立的 `models\Frame-Interpolation` 补帧目录；配合 `-no-upscale` 时可不提供（仅补帧模式）。
+- `-interp-model` / `--interp-model`：补帧模型统一位于 `models\Frame-Interpolation`，其下目录名不限。CLI 会递归按格式分类：NCNN 使用含配套 `.param/.bin` 的目录，CUDA/PyTorch 使用 `.pth/.pt/.pkl`，TensorRT 列出 `.engine`（独立补帧引擎执行器暂未实现）。可与 `-modelpath` 同时使用（先补帧后放大）。
 - `-interp-factor <N>`：补帧倍率（帧率倍数，默认 2，需大于 1；透传给 RIFE `--interpolate_factor`）。
 - `-interp-backend <ncnn|cuda|tensorrt>`：独立的 RIFE 后端；RIFE 支持 NCNN、CUDA/PyTorch、TensorRT（TensorRT 使用 `.pth` 并由 RVE 自动构建 Engine）。
 - `-scene-threshold <N>`：转场检测阈值，使用 RVE 官方外部 0-10 标尺，默认 4；数值越低越敏感，越容易跳过转场处的插帧，直接透传给 RVE。
@@ -47,7 +47,7 @@ videoenhancer.exe -i <输入视频> -no-upscale -backend cuda -interp-model <CUD
 - HDR 与位深：程序通过 `ffprobe` 的结构化颜色元数据识别 PQ（SMPTE ST 2084）和 HLG，并为 CUDA/PyTorch、TensorRT 启用 16-bit `rgb48le` 帧模式；跨后端中间视频的 SDR/HDR 像素格式分别为 `gbrp10le` / `gbrp16le`。普通 10/12-bit SDR 仍受 RVE 8-bit `rgb24` 读帧限制，不属于源位深原样传递。
 - `-backend <ncnn|cuda|tensorrt>`：推理后端。`ncnn`（默认，Vulkan）；`cuda`（PyTorch）——
   放大模型使用 `models` 及子目录下的 `.pth/.pt/.pkl` 文件（如 `PTH/AnimeJaNai-V2-2x-Compact-36K`），
-  补帧模型使用 `models\RIFE` 下的 `.pth` 文件；超分与补帧可独立使用。
+  补帧模型使用 `models\Frame-Interpolation` 下的 PyTorch 权重；超分与补帧可独立使用。
   `tensorrt` 使用 `models` 及其所有子目录中的 `.engine` 文件；NCNN 使用递归发现的 `.param/.bin` 模型文件夹。放大模型列表统一以相对 `models` 的路径显示。
 - `-no-upscale`：不放大（仅补帧模式，需配合 `-interp-model`）。
 - `-ffmpeg-settings`：FFmpeg 编码参数片段，**最后一个参数是输出文件路径**（无 `-o`），末尾 `-y` 表示覆盖。
@@ -55,7 +55,7 @@ videoenhancer.exe -i <输入视频> -no-upscale -backend cuda -interp-model <CUD
   - 进度行按每秒 1 行节流输出，避免界面闪烁；
   - FPS 精确重算：用「已渲染帧数 / 有效耗时（总耗时 − 暂停耗时）」计算并保留两位小数
     （后端自报为取整且包含暂停时间），ETA 按相同速率重算；暂停状态来自 `-pause-shm` 共享内存字节。
-- `-h`：帮助（含 videoenhancer.ini 配置说明）；`-scale <N>`：强制倍率；`--list-models` / `--search-models`：按后端递归列出 `models` 子目录中的放大模型，并排除 `models\RIFE`；`--list-interp-models`：只列出 `models\RIFE` 下的补帧模型（加 `-interp-backend cuda/tensorrt` 则列出 `.pth` 补帧模型；均可用 `--json` 输出一行 JSON 数组，供插件下拉框解析）；`--check`：仅检测环境。
+- `-h`：帮助（含 videoenhancer.ini 配置说明）；`-scale <N>`：强制倍率；`--list-models` / `--search-models`：按后端递归列出 `models` 子目录中的放大模型，并排除 `models\Frame-Interpolation`；`--list-interp-models`：按后端列出 `models\Frame-Interpolation` 下兼容的补帧模型（均可用 `--json` 输出一行 JSON 数组，供插件下拉框解析）；`--check`：仅检测环境。
 - `-pause-shm <ID>`：透传暂停共享内存名（供插件暂停/恢复后端）；`-stop-shm <ID>`：停止共享内存名，字节变 1 时优雅停止，已处理部分正常写入输出文件（退出码 130）。
 - `--debug-split`：仅打印 `-ffmpeg-settings` 的拆分结果（`custom_encoder` / `output` / `overwrite`），用于调试 -map 剥除逻辑。
 
@@ -73,7 +73,7 @@ PowerShell 示例：
 .\videoenhancer.exe -i "D:\videos\input.mp4" -modelpath RealESRGAN-AnimeVideoV3-2x -interp-model rife-v4.25 `
     -ffmpeg-settings '-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -c:a copy "D:\videos\out.mp4"'
 
-# CUDA 推理（PyTorch，仅补帧，需要 models\RIFE\*.pth）：
+# CUDA 推理（PyTorch，仅补帧，需要 models\Frame-Interpolation 下的权重）：
 .\videoenhancer.exe -i "D:\videos\input.mp4" -no-upscale -backend cuda -interp-model rife46 `
     -ffmpeg-settings '-c:v libx264 -preset medium -crf 18 -r 60 -c:a copy "D:\videos\out_60fps.mp4"'
 
@@ -89,9 +89,9 @@ PowerShell 示例：
 - `bin\ffmpeg\ffmpeg.exe`
 - `python\python\python.exe` + `python\backend\rve-backend.py` + python 库
 - `models\` 模型库（含 `.param` / `.bin` 的模型文件夹）
-- `models\RIFE\` 补帧模型库（ncnn：含 `flownet.param` / `flownet.bin` 的子文件夹；cuda：`*.pth` 模型文件；缺失时仅提示，不影响纯超分）
+- `models\Frame-Interpolation\` 补帧模型库（NCNN：`RIFE` 下含 `flownet.param` / `flownet.bin` 的子文件夹；CUDA：RIFE、GIMM-VFI、GMFSS 下的 PyTorch 权重；缺失时仅提示，不影响纯超分）
 
-`--check` 会额外运行 `ffmpeg -version`、`import numpy, cv2` 与后端 `--version` 做功能验证。
+`--check` 会额外运行 `ffmpeg -version`、`import numpy, cv2` 与后端 `--version` 做功能验证；传入 `-backend` 时只检查该后端兼容的模型，避免 TensorRT 等后端被 NCNN 模型目录误报为缺失。
 
 ## 目录结构
 

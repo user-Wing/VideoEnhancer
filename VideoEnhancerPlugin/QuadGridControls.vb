@@ -39,8 +39,8 @@ Namespace videoenhancer
     Friend Class FluentCardPanel
         Inherits Panel
 
-        Friend Property FillColor As Color = Color.FromArgb(43, 43, 43)
-        Friend Property StrokeColor As Color = Color.FromArgb(62, 62, 62)
+        Friend Property FillColor As Color = Color.White
+        Friend Property StrokeColor As Color = Color.FromArgb(229, 229, 229)
         Friend Property CornerRadius As Integer = 10
 
         Public Sub New()
@@ -72,9 +72,9 @@ Namespace videoenhancer
         Private _maximum As Integer = 100
         Private _value As Integer
 
-        Friend Property TrackColor As Color = Color.FromArgb(42, 50, 61)
-        Friend Property ProgressColor As Color = Color.FromArgb(76, 166, 255)
-        Friend Property GlowColor As Color = Color.FromArgb(112, 194, 255)
+        Friend Property TrackColor As Color = Color.FromArgb(215, 215, 215)
+        Friend Property ProgressColor As Color = Color.FromArgb(96, 174, 232)
+        Friend Property GlowColor As Color = Color.FromArgb(0, 103, 192)
         Friend Property CornerRadius As Integer = 5
 
         Friend Property Minimum As Integer
@@ -200,6 +200,78 @@ Namespace videoenhancer
         End Sub
     End Class
 
+    ''' <summary>QSS 风格描边输入宿主：1px 圆角描边 + 底部 2px 强调线（聚焦时变为品牌蓝）。</summary>
+    Friend Class OutlinedControlHost
+        Inherits Panel
+
+        Private _childFocused As Boolean
+        Private _hovered As Boolean
+
+        Public Sub New()
+            BackColor = Color.White
+            BorderStyle = BorderStyle.None
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or
+                     ControlStyles.OptimizedDoubleBuffer Or ControlStyles.ResizeRedraw, True)
+        End Sub
+
+        Friend Sub AttachChild(child As Control)
+            Controls.Add(child)
+            AddHandler child.GotFocus,
+                Sub()
+                    _childFocused = True
+                    Invalidate()
+                End Sub
+            AddHandler child.LostFocus,
+                Sub()
+                    _childFocused = False
+                    Invalidate()
+                End Sub
+            AddHandler child.MouseEnter,
+                Sub()
+                    _hovered = True
+                    Invalidate()
+                End Sub
+            AddHandler child.MouseLeave,
+                Sub()
+                    _hovered = False
+                    Invalidate()
+                End Sub
+        End Sub
+
+        Protected Overrides Sub OnMouseEnter(e As EventArgs)
+            _hovered = True
+            Invalidate()
+            MyBase.OnMouseEnter(e)
+        End Sub
+
+        Protected Overrides Sub OnMouseLeave(e As EventArgs)
+            _hovered = False
+            Invalidate()
+            MyBase.OnMouseLeave(e)
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            MyBase.OnPaint(e)
+            If Width <= 1 OrElse Height <= 1 Then Return
+            Dim g = e.Graphics
+            g.SmoothingMode = SmoothingMode.AntiAlias
+            Dim border = If(_childFocused, Color.FromArgb(0, 103, 192),
+                            If(_hovered, Color.FromArgb(160, 160, 160), Color.FromArgb(199, 199, 199)))
+            Using path = QuadGridDrawing.RoundedPath(New RectangleF(0.5F, 0.5F, Width - 1.0F, Height - 1.0F), 5)
+                Using pen As New Pen(border, 1.0F)
+                    g.DrawPath(pen, path)
+                End Using
+            End Using
+            Dim accent = If(_childFocused, Color.FromArgb(0, 103, 192), Color.FromArgb(138, 138, 138))
+            Dim bottom = New RectangleF(3.0F, Height - 2.5F, Width - 6.0F, 2.0F)
+            Using accentPath = QuadGridDrawing.RoundedPath(bottom, 1.5F)
+                Using brush As New SolidBrush(accent)
+                    g.FillPath(brush, accentPath)
+                End Using
+            End Using
+        End Sub
+    End Class
+
     ''' <summary>视频输入卡片：缩略图、编号、文件名和大号拖放提示在同一圆角控件内绘制。</summary>
     Friend Class VideoSlotCard
         Inherits Control
@@ -219,7 +291,8 @@ Namespace videoenhancer
         Friend Sub SetVideo(path As String)
             _filePath = If(path, "")
             AccessibleName = If(String.IsNullOrWhiteSpace(_filePath), "空视频槽", System.IO.Path.GetFileName(_filePath))
-            _badge.BackColor1 = If(String.IsNullOrWhiteSpace(_filePath), Color.FromArgb(58, 58, 58), Color.FromArgb(0, 120, 212))
+            _badge.BackColor1 = If(String.IsNullOrWhiteSpace(_filePath), Color.FromArgb(233, 233, 233), Color.FromArgb(0, 103, 192))
+            _badge.ForeColor = If(String.IsNullOrWhiteSpace(_filePath), Color.FromArgb(136, 136, 136), Color.White)
             _hint.Visible = String.IsNullOrWhiteSpace(_filePath)
             _fileName.Visible = Not _hint.Visible
             _fileName.Text = If(_hint.Visible, "", System.IO.Path.GetFileName(_filePath))
@@ -242,17 +315,17 @@ Namespace videoenhancer
             _badge.TextAlign = HtmlColorLabel.TextAlignEnum.Center
             _badge.ForeColor = Color.White
             _badge.Font = New Font("Microsoft YaHei UI", 10.0F, FontStyle.Bold)
-            _badge.BackColor1 = Color.FromArgb(58, 58, 58)
+            _badge.BackColor1 = Color.FromArgb(233, 233, 233)
             _badge.BorderRadius = 7
             _badge.BorderSize = 0
             _hint.Text = "拖放视频或点击选择"
             _hint.TextAlign = HtmlColorLabel.TextAlignEnum.Center
-            _hint.ForeColor = Color.FromArgb(205, 205, 205)
+            _hint.ForeColor = Color.FromArgb(102, 102, 102)
             _hint.Font = New Font("Microsoft YaHei UI", 11.0F, FontStyle.Regular)
             _hint.BackColor1 = Color.Transparent
             _hint.BorderSize = 0
             _fileName.TextAlign = HtmlColorLabel.TextAlignEnum.MiddleLeft
-            _fileName.ForeColor = Color.FromArgb(235, 239, 244)
+            _fileName.ForeColor = Color.FromArgb(32, 32, 32)
             _fileName.Font = New Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular)
             _fileName.BackColor1 = Color.Transparent
             _fileName.BorderSize = 0
@@ -288,10 +361,10 @@ Namespace videoenhancer
             g.InterpolationMode = InterpolationMode.HighQualityBicubic
             Dim outer = New RectangleF(0.5F, 0.5F, Math.Max(1, Width - 1.0F), Math.Max(1, Height - 1.0F))
             Using path = QuadGridDrawing.RoundedPath(outer, 9)
-                Using brush As New LinearGradientBrush(ClientRectangle, Color.FromArgb(50, 50, 50), Color.FromArgb(43, 43, 43), 90.0F)
+                Using brush As New SolidBrush(Color.White)
                     g.FillPath(brush, path)
                 End Using
-                Using pen As New Pen(If(String.IsNullOrWhiteSpace(_filePath), Color.FromArgb(68, 68, 68), Color.FromArgb(96, 205, 255)), If(String.IsNullOrWhiteSpace(_filePath), 1.0F, 1.5F))
+                Using pen As New Pen(If(String.IsNullOrWhiteSpace(_filePath), Color.FromArgb(199, 199, 199), Color.FromArgb(0, 103, 192)), If(String.IsNullOrWhiteSpace(_filePath), 1.0F, 1.5F))
                     g.DrawPath(pen, path)
                 End Using
             End Using
@@ -307,9 +380,14 @@ Namespace videoenhancer
                 End Using
                 g.Restore(state)
             Else
-                Using brush As New SolidBrush(Color.FromArgb(30, 30, 30))
+                Using brush As New SolidBrush(Color.FromArgb(245, 245, 245))
                     Using clip = QuadGridDrawing.RoundedPath(imageRect, 6)
                         g.FillPath(brush, clip)
+                    End Using
+                End Using
+                Using pen As New Pen(Color.FromArgb(199, 199, 199))
+                    Using clip = QuadGridDrawing.RoundedPath(New RectangleF(imageRect.X + 0.5F, imageRect.Y + 0.5F, imageRect.Width - 1.0F, imageRect.Height - 1.0F), 6)
+                        g.DrawPath(pen, clip)
                     End Using
                 End Using
             End If
@@ -413,7 +491,7 @@ Namespace videoenhancer
             Dim centerY = Height / 2.0F
             Dim track = New RectangleF(1.0F, centerY - 3.0F, Math.Max(1, Width - 2.0F), 6.0F)
             Using path = QuadGridDrawing.RoundedPath(track, 3)
-                Using brush As New SolidBrush(Color.FromArgb(82, 82, 82))
+                Using brush As New SolidBrush(Color.FromArgb(215, 215, 215))
                     e.Graphics.FillPath(brush, path)
                 End Using
             End Using
@@ -422,17 +500,20 @@ Namespace videoenhancer
             If filledWidth > 0 Then
                 Dim filled = New RectangleF(1.0F, centerY - 3.0F, filledWidth, 6.0F)
                 Using path = QuadGridDrawing.RoundedPath(filled, 3)
-                    Using brush As New SolidBrush(Color.FromArgb(96, 205, 255))
+                    Using brush As New SolidBrush(Color.FromArgb(0, 103, 192))
                         e.Graphics.FillPath(brush, path)
                     End Using
                 End Using
             End If
             Dim handleX = CSng(1 + (Width - 2) * ratio)
-            Using shadow As New SolidBrush(Color.FromArgb(80, 0, 0, 0))
+            Using shadow As New SolidBrush(Color.FromArgb(40, 0, 49, 79))
                 e.Graphics.FillEllipse(shadow, handleX - 8, centerY - 7, 16, 16)
             End Using
-            Using brush As New SolidBrush(Color.FromArgb(235, 242, 248))
+            Using brush As New SolidBrush(Color.White)
                 e.Graphics.FillEllipse(brush, handleX - 6, centerY - 6, 12, 12)
+            End Using
+            Using pen As New Pen(Color.FromArgb(0, 103, 192), 1.5F)
+                e.Graphics.DrawEllipse(pen, handleX - 6, centerY - 6, 12, 12)
             End Using
         End Sub
     End Class

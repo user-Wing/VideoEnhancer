@@ -50,7 +50,7 @@
    选择的模型写入插件配置。
 3. 「补帧开关」（BooleanSwitch）——打开时启用 RIFE 补帧（与超分互斥，不能同时开启）；
    「补帧模型」下拉框：首次展开会调用 `videoenhancer.exe --list-interp-models`
-   读取 `models\RIFE` 下的补帧模型（如 `rife-v4.25`；CUDA 时为 `.pth` 文件名，如 `rife46`）；
+   读取 `models\Frame-Interpolation` 下的补帧模型（NCNN 使用 `RIFE` 子目录，CUDA/PyTorch 支持 RIFE、GIMM-VFI 和 GMFSS）；
    「补帧倍率」下拉框（2/3/4/8 倍）选择后弹窗提示：请前往「视频参数-画面帧」页面
    指定帧率为原视频的 X 倍；倍率作为 `-interp-factor` 传给 videoenhancer.exe。
 
@@ -183,7 +183,7 @@ pwsh -ExecutionPolicy Bypass -File .\build.ps1
 - 超分与补帧互斥（不能同时开启）：打开其中一个时另一个会被自动关闭并提示。
 - 仅补帧模式（未开超分开关、仅开补帧开关）时任务命令会自动附加 `-no-upscale`。
 - CUDA 推理（`-backend cuda`）：超分需在 `models` 下放置 `.pth/.pt/.pkl` 放大模型，
-  补帧需在 `models\RIFE` 下放置 `.pth` 补帧模型；当前开启的模式无 `.pth` 模型时
+  补帧需在 `models\Frame-Interpolation` 下放置兼容的补帧模型；当前开启的模式无兼容模型时
   插件自动回退到 NCNN 并在状态区提示。
 - 多个插件同时修改 `替代进程文件名` 会互相影响，属已知限制。
 
@@ -228,5 +228,5 @@ pwsh -ExecutionPolicy Bypass -File .\build.ps1
   第三排「选择推理方式」（NCNN / CUDA），第四排「补帧开关 + 补帧模型 + 补帧倍率」；
   超分/补帧互斥；补帧倍率选择后弹窗提示前往「视频参数-画面帧」设置帧率；
   CUDA 推理（PyTorch）按 rve-backend 传参（`-b pytorch --device cuda --pytorch_gpu_id 0`），
-  需要 `models\RIFE` 下的 `.pth` 补帧模型；修复补帧强行停止时输出文件被销毁的问题
+  需要 `models\Frame-Interpolation` 下的兼容补帧模型；修复补帧强行停止时输出文件被销毁的问题
   （CLI 进程快照枚举改为 Unicode，停止时等待 ffmpeg 写进程 EOF 收尾，已处理部分正常写盘）。

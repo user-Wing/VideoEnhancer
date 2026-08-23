@@ -4,6 +4,8 @@ Imports System.Diagnostics
 Imports System.Drawing
 Imports System.IO
 Imports System.Linq
+Imports System.Net.Http
+Imports System.Security.Cryptography
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
@@ -174,8 +176,12 @@ Namespace videoenhancer
         Private ReadOnly _pageConverter As New Panel()
         Private ReadOnly _pageModelInfo As New Panel()
         Private ReadOnly _pageTutorial As New Panel()
-        Private ReadOnly _markdownSources As New Dictionary(Of Panel, String)()
-        Private ReadOnly _markdownReady As New HashSet(Of Panel)()
+        Private Const TutorialHome As String = "https://github.com/user-Wing/VideoEnhancer/blob/main/README.md"
+        Private ReadOnly _tutorialAddress As New ModernTextBox()
+        Private ReadOnly _tutorialLoadButton As New ModernButton()
+        Private ReadOnly _tutorialViewer As New MarkDownViewer()
+        Private _tutorialLoaded As Boolean = False
+        Private _tutorialLoading As Boolean = False
         ' ── 独立图片超分页（位于超分主界面内）──
         Private ReadOnly _btnImageFiles As New ModernButton()
         Private ReadOnly _btnImageFolder As New ModernButton()
@@ -390,8 +396,8 @@ Namespace videoenhancer
                 Return
             End If
             _config.UpscaleEnabled = _switchUpscale.Checked
-            ' 开启超分：CUDA 模式下放大模型列表切换为 models 下的 .pth 模型（空列表时自动回退 ncnn）
-            If _switchUpscale.Checked AndAlso (_config.Backend = "cuda" OrElse _config.Backend = "tensorrt" OrElse _config.Backend = "onnx" OrElse _config.Backend = "flashvsr") Then
+            ' 开启超分：按当前后端刷新对应模型列表。
+            If _switchUpscale.Checked AndAlso (_config.Backend = "cuda" OrElse _config.Backend = "tensorrt" OrElse _config.Backend = "onnx" OrElse _config.Backend = "flashvsr" OrElse _config.Backend = "basicvsrpp") Then
                 RefreshUpscaleModels()
             End If
             _config.Save()
@@ -411,6 +417,13 @@ Namespace videoenhancer
                 _switchInterp.Checked = False
                 _syncingInterpSwitch = False
                 ShowStatus("请先开启「插件总开关」", True)
+                Return
+            End If
+            If _switchInterp.Checked AndAlso _config.Backend = "basicvsrpp" Then
+                _syncingInterpSwitch = True
+                _switchInterp.Checked = False
+                _syncingInterpSwitch = False
+                ShowStatus("BasicVSR++ 是时序视频超分管线，不能同时启用 RIFE 补帧。", True)
                 Return
             End If
             _config.InterpEnabled = _switchInterp.Checked
@@ -544,15 +557,22 @@ Namespace videoenhancer
             Dim backend = If(String.IsNullOrWhiteSpace(_config.InterpBackend), "ncnn", _config.InterpBackend)
             Task.Run(Sub()
                          Dim models = RunListModels(exePath, "--list-interp-models", "-interp-backend", backend)
+                         Dim applyModels As Action =
+                             Sub()
+                                 _loadingInterpModels = False
+                                 Dim currentBackend = If(String.IsNullOrWhiteSpace(_config.InterpBackend), "ncnn", _config.InterpBackend)
+                                 If Not String.Equals(exePath, _config.ExePath, StringComparison.OrdinalIgnoreCase) OrElse
+                                     Not String.Equals(backend, currentBackend, StringComparison.OrdinalIgnoreCase) Then
+                                     StartInterpModelLoad()
+                                     Return
+                                 End If
+                                 ApplyInterpModelList(models)
+                             End Sub
                          Try
                              If Me.IsHandleCreated Then
-                                 Me.BeginInvoke(New Action(Sub()
-                                                               _loadingInterpModels = False
-                                                               ApplyInterpModelList(models)
-                                                           End Sub))
+                                 Me.BeginInvoke(applyModels)
                              Else
-                                 _loadingInterpModels = False
-                                 ApplyInterpModelList(models)
+                                 applyModels()
                              End If
                          Catch
                              _loadingInterpModels = False
@@ -574,7 +594,7 @@ Namespace videoenhancer
                         For Each pattern In New String() {"*.engine", "*.pth", "*.pt", "*.pkl"}
                             For Each p In Directory.GetFiles(modelDir, pattern, SearchOption.AllDirectories)
                                 Dim relative = Path.GetRelativePath(modelDir, p).Replace(Convert.ToChar(92), "/"c)
-                                If relative.StartsWith("RIFE/", StringComparison.OrdinalIgnoreCase) Then Continue For
+                                If relative.StartsWith("Frame-Interpolation/", StringComparison.OrdinalIgnoreCase) Then Continue For
                                 If relative.StartsWith("TensorRT-Cache/", StringComparison.OrdinalIgnoreCase) Then Continue For
                                 Dim n = Path.ChangeExtension(relative, Nothing)
                                 If Not String.IsNullOrWhiteSpace(n) AndAlso Not models.Contains(n, StringComparer.OrdinalIgnoreCase) Then models.Add(n)
@@ -603,13 +623,15 @@ Namespace videoenhancer
                     "（ONNX Runtime，models 下的 .onnx 文件）",
                     If(_config.Backend = "flashvsr",
                     "（FlashVSR，连续视频帧专用模型目录）",
+                    If(_config.Backend = "basicvsrpp",
+                    "（BasicVSR++，时序 .pth 或 config.py/chkpts.pth 优化目录）",
                     If(_config.Backend = "cuda",
                     "（CUDA，models 下的 .pth/.pt/.pkl 文件）",
-                    "（models 目录，.param/.bin 文件夹）"))))
+                    "（models 目录，.param/.bin 文件夹）")))))
                 ShowStatus($"已从 videoenhancer.exe 读取 {models.Count} 个可用模型 " & modeText, False)
             Else
-                If (_config.Backend = "cuda" OrElse _config.Backend = "tensorrt" OrElse _config.Backend = "onnx" OrElse _config.Backend = "flashvsr") AndAlso _config.UpscaleEnabled Then
-                    Dim missingExt = If(_config.Backend = "flashvsr", "FlashVSR 完整模型目录", If(_config.Backend = "tensorrt", "PTH 或 .engine", If(_config.Backend = "onnx", ".onnx", ".pth")))
+                If (_config.Backend = "cuda" OrElse _config.Backend = "tensorrt" OrElse _config.Backend = "onnx" OrElse _config.Backend = "flashvsr" OrElse _config.Backend = "basicvsrpp") AndAlso _config.UpscaleEnabled Then
+                    Dim missingExt = If(_config.Backend = "flashvsr", "FlashVSR 完整模型目录", If(_config.Backend = "basicvsrpp", "BasicVSR++ .pth 或优化目录", If(_config.Backend = "tensorrt", "PTH 或 .engine", If(_config.Backend = "onnx", ".onnx", ".pth"))))
                     _cmbModel.WaterText = "未找到 " & missingExt & " 放大模型"
                     ShowStatus("未找到 " & missingExt & " 放大模型，请确认 models 目录", True)
                     ' 保留用户选择的 TensorRT，不因一次扫描失败自动改回 NCNN。
@@ -638,16 +660,16 @@ Namespace videoenhancer
                 Dim modeText = If(_config.InterpBackend = "tensorrt",
                     "（TensorRT，RIFE .pth 自动构建 Engine）",
                     If(_config.InterpBackend = "cuda",
-                    "（CUDA，" & Convert.ToChar(92) & "RIFE 下的 .pth 文件）",
-                    "（NCNN，models" & Convert.ToChar(92) & "RIFE）"))
+                    "（CUDA/PyTorch，Frame-Interpolation）",
+                    "（NCNN RIFE 模型目录）"))
                 ShowStatus($"已读取 {models.Count} 个补帧模型 " & modeText, False)
             Else
                 If _config.InterpBackend = "cuda" OrElse _config.InterpBackend = "tensorrt" Then
                     _cmbInterp.WaterText = "未找到 .pth 补帧模型"
-                    ShowStatus(If(_config.InterpBackend = "tensorrt", "TensorRT", "CUDA") & " RIFE 需要 models" & Convert.ToChar(92) & "RIFE 下的 .pth 模型", _config.InterpEnabled)
+                    ShowStatus("未在 models" & Convert.ToChar(92) & "Frame-Interpolation 找到兼容的 PyTorch 补帧权重", _config.InterpEnabled)
                 Else
                     _cmbInterp.WaterText = "未找到补帧模型"
-                    ShowStatus("未在 models" & Convert.ToChar(92) & "RIFE 目录找到含 .param/.bin 的补帧模型", True)
+                    ShowStatus("未在 models" & Convert.ToChar(92) & "Frame-Interpolation 找到补帧模型", True)
                 End If
             End If
         End Sub
@@ -666,7 +688,17 @@ Namespace videoenhancer
             If String.IsNullOrWhiteSpace(model) Then
                 Return
             End If
-            _config.InterpModel = model.Trim()
+            Dim selectedModel = model.Trim()
+            Dim cudaOnly = selectedModel.StartsWith("GIMM-VFI/", StringComparison.OrdinalIgnoreCase) OrElse
+                selectedModel.StartsWith("GMFSS/", StringComparison.OrdinalIgnoreCase)
+            If cudaOnly AndAlso Not String.Equals(_config.InterpBackend, "cuda", StringComparison.OrdinalIgnoreCase) Then
+                _config.InterpBackend = "cuda"
+                _syncingInterpBackend = True
+                SyncInterpBackendCombo()
+                _syncingInterpBackend = False
+                ShowStatus("该补帧模型仅支持 CUDA/PyTorch，已自动切换后端", False)
+            End If
+            _config.InterpModel = selectedModel
             _config.Save()
         End Sub
 
@@ -680,20 +712,31 @@ Namespace videoenhancer
                 Return
             End If
             _config.Backend = backend
+            If backend = "basicvsrpp" AndAlso _config.InterpEnabled Then
+                _config.InterpEnabled = False
+                _syncingInterpSwitch = True
+                _switchInterp.Checked = False
+                _syncingInterpSwitch = False
+            End If
             _config.Save()
             ' 切换后端后重新读取两个模型列表（CUDA 需要 .pth 模型；活动模式无 .pth 时由 Apply*List 自动回退）
             RefreshUpscaleModels()
             RefreshInterpModels()
+            UpdateModeStateLabels()
+            UpdateProcessOrderState()
             UpdateAdvancedControlState()
+            UpdateHookState()
             Dim modeText = If(backend = "tensorrt",
                 "TensorRT（NVIDIA）：超分 Engine 自动构建；组合补帧自动使用 NCNN RIFE",
                 If(backend = "onnx",
                 "ONNX Runtime：超分用 .onnx；组合补帧自动使用 NCNN RIFE",
                 If(backend = "flashvsr",
                 "FlashVSR（NVIDIA）：连续视频帧扩散超分；组合补帧会自动分两阶段",
+                If(backend = "basicvsrpp",
+                "BasicVSR++（NVIDIA）：支持时序 .pth 与 config.py/chkpts.pth 优化目录，不能同时补帧",
                 If(backend = "cuda",
-                "CUDA（PyTorch）：超分用 models 下的 .pth 模型，补帧用 models" & Convert.ToChar(92) & "RIFE 下的 .pth 模型",
-                "NCNN（Vulkan）"))))
+                "CUDA（PyTorch）：超分用 models 下的 .pth 模型，补帧用 models" & Convert.ToChar(92) & "Frame-Interpolation 下的 .pth 模型",
+                "NCNN（Vulkan）")))))
             ShowStatus("推理方式：" & modeText, False)
         End Sub
 
@@ -718,6 +761,9 @@ Namespace videoenhancer
 
         Private Shared Function BackendValue(item As Object) As String
             Dim text = If(item Is Nothing, "", item.ToString())
+            If text.Contains("BasicVSR", StringComparison.OrdinalIgnoreCase) Then
+                Return "basicvsrpp"
+            End If
             If text.Contains("FlashVSR") Then
                 Return "flashvsr"
             End If
@@ -862,7 +908,7 @@ Namespace videoenhancer
                              }
                              psi.ArgumentList.Add("--check")
                              psi.ArgumentList.Add("-backend")
-                             psi.ArgumentList.Add(_config.Backend)
+                             psi.ArgumentList.Add(If(String.IsNullOrWhiteSpace(_config.Backend), "ncnn", _config.Backend))
                              Using p = Process.Start(psi)
                                  If p Is Nothing Then
                                      Return
@@ -1223,28 +1269,7 @@ Namespace videoenhancer
                 "- RIFE 模型用于生成中间帧；2 倍适合大多数素材，4 倍以上建议先短片测试。" & Environment.NewLine & Environment.NewLine &
                 "## 建议" & Environment.NewLine &
                 "优先从较短片段开始，确认画质、显存占用和速度后再处理完整视频。")
-            BuildMarkdownPage(_pageTutorial,
-                "# 快速上手" & Environment.NewLine & Environment.NewLine &
-                "## 1. 连接处理程序" & Environment.NewLine &
-                "在 **超分主界面** 指定 `videoenhancer.exe`，然后开启插件。" & Environment.NewLine & Environment.NewLine &
-                "## 2. 选择处理模式" & Environment.NewLine &
-                "- 开启 **视频超分**，选择推理后端和放大模型。" & Environment.NewLine &
-                "- 开启 **运动补帧**，选择 RIFE 模型与倍率；可与超分同时开启。" & Environment.NewLine &
-                "- **组合处理顺序**只有在视频超分和运动补帧同时开启时才可选择；关闭任一功能后，该选项会自动变灰。" & Environment.NewLine &
-                "- **画质优先：先超分，再补帧。** 默认使用该顺序；同一后端通过内置包装器逐帧传递。" & Environment.NewLine &
-                "- **速度/算力优先：先补帧，再超分。** 超分与补帧使用同一后端时走后端原生单程管线。" & Environment.NewLine &
-                Environment.NewLine &
-                "## 3. 处理阶段与中间文件" & Environment.NewLine &
-                "- 超分和补帧使用同一后端时，两种顺序都在同一个 RVE 进程内逐帧完成，只执行一次最终编码，不生成整段中间视频。" & Environment.NewLine &
-                "- 两种后端不同时才会分成两个阶段，并在输出目录生成隐藏的 `.videoenhancer-*.mkv` 临时文件；SDR 使用 `gbrp10le`，PQ/HLG HDR 使用 `gbrp16le` RGB FFV1，并直接复制音频和字幕。" & Environment.NewLine &
-                "- 临时文件会在任务成功、失败或中止后自动清理；4K、高帧率或长视频仍需预留足够磁盘空间。FFV1 只用于阶段间传递，不是最终输出编码。" & Environment.NewLine &
-                "- 当前 RVE 的 SDR 内部帧为 8-bit `rgb24`；最终输出选择 `yuv420p10le` 只改变编码格式，不会把模型推理提升为原生 10-bit。" & Environment.NewLine &
-                "- PQ/HLG HDR 才启用 16-bit `rgb48le` 帧模式，并仅允许 CUDA/PyTorch 或 TensorRT；这不等于普通 10/12-bit SDR 已实现源位深原样传递。" & Environment.NewLine &
-                Environment.NewLine &
-                "## 4. 加入编码队列" & Environment.NewLine &
-                "回到 3FUI 准备文件并加入队列，插件会自动通过 CLI 中转。" & Environment.NewLine & Environment.NewLine &
-                "## 5. 查看输出" & Environment.NewLine &
-                "在 **实时预览** 查看处理中或已完成的帧；需要多视频比较时打开 **对比工作室**。")
+            BuildTutorialPage()
 
             For Each page As Panel In New Panel() {
                 _pageUpscale, _pagePreview, _pageAdvanced, _pageDownloader,
@@ -1456,6 +1481,7 @@ Namespace videoenhancer
             _cmbBackend.Items.Add("TensorRT (NVIDIA)")
             _cmbBackend.Items.Add("ONNX Runtime")
             _cmbBackend.Items.Add("FlashVSR (NVIDIA · 视频)")
+            _cmbBackend.Items.Add("BasicVSR++ (NVIDIA · 视频)")
             AddHandler _cmbBackend.SelectedIndexChanged, AddressOf OnBackendSelected
             _cmbModel.WaterText = "选择放大模型…"
             ConfigureCombo(_cmbModel)
@@ -1748,6 +1774,7 @@ Namespace videoenhancer
             _cmbBackend.Items.Add("TensorRT (NVIDIA)")
             _cmbBackend.Items.Add("ONNX Runtime")
             _cmbBackend.Items.Add("FlashVSR (NVIDIA · 视频)")
+            _cmbBackend.Items.Add("BasicVSR++ (NVIDIA · 视频)")
             AddHandler _cmbBackend.SelectedIndexChanged, AddressOf OnBackendSelected
 
             Dim upscaleModelLabel As Label = CreateTextLabel("放大模型", 8.7F, FontStyle.Regular, UiTextSecondary)
@@ -2201,6 +2228,7 @@ Namespace videoenhancer
             _cmbBackend.Items.Add("TensorRT (NVIDIA)")
             _cmbBackend.Items.Add("ONNX Runtime")
             _cmbBackend.Items.Add("FlashVSR (NVIDIA · 视频)")
+            _cmbBackend.Items.Add("BasicVSR++ (NVIDIA · 视频)")
             AddHandler _cmbBackend.SelectedIndexChanged, AddressOf OnBackendSelected
             rowUpscale.Controls.Add(_cmbBackend)
             _lblSwitch.Text = "<font color=#E8E8E8><b>超分开关</b></font>"
@@ -2520,8 +2548,8 @@ Namespace videoenhancer
 
         Private Sub OnStartImageProcessing(sender As Object, e As EventArgs)
             If _imageRunning Then Return
-            If _config.Backend = "flashvsr" Then
-                ShowStatus("FlashVSR 是连续视频帧模型，图片超分请选择 NCNN、CUDA、TensorRT 或 ONNX。", True)
+            If _config.Backend = "flashvsr" OrElse _config.Backend = "basicvsrpp" Then
+                ShowStatus(If(_config.Backend = "basicvsrpp", "BasicVSR++", "FlashVSR") & " 是连续视频帧模型，图片超分请选择 NCNN、CUDA、TensorRT 或 ONNX。", True)
                 Return
             End If
             If _imageFiles.Count = 0 AndAlso _imageFolders.Count = 0 Then
@@ -3497,7 +3525,7 @@ Namespace videoenhancer
                             })
                         Next
                     End Using
-                    Dim categoryOrder = New String() {"Backend", "Bin", "ONNX", "Param-Bin", "FlashVSR", "RIFE", "PTH", "TensorRT-Default"}
+                    Dim categoryOrder = New String() {"Backend", "BasicVSR++", "Bin", "ONNX", "Param-Bin", "FlashVSR", "Frame-Interpolation", "PTH", "TensorRT-Default"}
                     For Each group In entries.GroupBy(Function(entry) DownloadCategory(entry.RelativePath)).
                             OrderBy(Function(value)
                                         Dim index = Array.FindIndex(categoryOrder, Function(name) name.Equals(value.Key, StringComparison.OrdinalIgnoreCase))
@@ -3522,6 +3550,9 @@ Namespace videoenhancer
         Private Shared Function DownloadCategory(relativePath As String) As String
             If String.IsNullOrWhiteSpace(relativePath) Then Return "其他"
             Dim normalized = relativePath.Replace("\"c, "/"c)
+            If normalized.StartsWith("Frame-Interpolation/", StringComparison.OrdinalIgnoreCase) Then
+                Return "Frame-Interpolation"
+            End If
             Dim slash = normalized.IndexOf("/"c)
             Return If(slash > 0, normalized.Substring(0, slash), normalized)
         End Function
@@ -3530,8 +3561,9 @@ Namespace videoenhancer
             Select Case category.ToUpperInvariant()
                 Case "ONNX" : Return "ONNX 模型"
                 Case "PARAM-BIN" : Return "Param-Bin 模型"
-                Case "RIFE" : Return "RIFE 模型"
+                Case "FRAME-INTERPOLATION" : Return "Frame-Interpolation补帧模型"
                 Case "PTH" : Return "PTH 模型"
+                Case "BASICVSR++" : Return "BasicVSR++ 模型"
                 Case "BACKEND" : Return "Backend 后端"
                 Case Else : Return category
             End Select
@@ -3551,6 +3583,17 @@ Namespace videoenhancer
                     If(category.Equals("Bin", StringComparison.OrdinalIgnoreCase),
                         Path.Combine(coreRoot, "bin"), Path.Combine(coreRoot, "models", category)))
                 Dim downloaded = Path.Combine(destinationRoot, suffix)
+                If category.Equals("Backend", StringComparison.OrdinalIgnoreCase) AndAlso
+                   (String.Equals(Path.GetExtension(suffix), ".7z", StringComparison.OrdinalIgnoreCase) OrElse
+                    String.Equals(Path.GetExtension(suffix), ".zip", StringComparison.OrdinalIgnoreCase)) Then
+                    Dim marker = Path.Combine(coreRoot, "python", ".videoenhancer-installed-" & Path.GetFileName(suffix) & ".marker")
+                    If File.Exists(marker) Then Return True
+                    ' 旧版固定名只要运行时存在就视为已安装；带日期的新包必须有对应版本标记。
+                    If Path.GetFileName(suffix).Equals("python.7z", StringComparison.OrdinalIgnoreCase) Then
+                        Return File.Exists(Path.Combine(coreRoot, "python", "python", "python.exe"))
+                    End If
+                    Return False
+                End If
                 If File.Exists(downloaded) Then Return True
 
                 ' 压缩包下载后会自动解压；刷新时用解压后的核心文件判断，清理压缩包后仍能保持“已存在”。
@@ -3573,10 +3616,11 @@ Namespace videoenhancer
                         Return Directory.Exists(Path.Combine(coreRoot, "bin", "PortableGit"))
                     End If
                 End If
-                If category.Equals("RIFE", StringComparison.OrdinalIgnoreCase) Then
-                    Return Directory.Exists(Path.Combine(coreRoot, "models", "RIFE")) AndAlso
-                        Directory.EnumerateFiles(Path.Combine(coreRoot, "models", "RIFE"), "*.param", SearchOption.AllDirectories).Any() AndAlso
-                        Directory.EnumerateFiles(Path.Combine(coreRoot, "models", "RIFE"), "*.bin", SearchOption.AllDirectories).Any()
+                If category.Equals("Frame-Interpolation", StringComparison.OrdinalIgnoreCase) Then
+                    If IsDownloadArchive(suffix) Then
+                        Return File.Exists(FrameInterpolationArchiveMarkerPath(coreRoot, normalized))
+                    End If
+                    Return False
                 End If
                 If category.Equals("Param-Bin", StringComparison.OrdinalIgnoreCase) Then
                     Dim modelsRoot = Path.Combine(coreRoot, "models")
@@ -3590,10 +3634,26 @@ Namespace videoenhancer
             End Try
         End Function
 
+        Private Shared Function IsDownloadArchive(valuePath As String) As Boolean
+            Select Case Path.GetExtension(valuePath).ToLowerInvariant()
+                Case ".7z", ".zip", ".rar", ".gz", ".xz", ".zst", ".tar"
+                    Return True
+                Case Else
+                    Return False
+            End Select
+        End Function
+
+        Private Shared Function FrameInterpolationArchiveMarkerPath(coreRoot As String, relativePath As String) As String
+            Dim normalized = relativePath.Replace("\"c, "/"c).ToUpperInvariant()
+            Dim hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))
+            Return Path.Combine(coreRoot, "models", "Frame-Interpolation", ".downloads", hash & ".installed")
+        End Function
+
         Private Sub AddDownloadGroup(category As String, entries As List(Of DownloadModelEntry))
             Dim group = New UltraDetailListView.ListGroup(category,
                 DownloadCategoryTitle(category) & "  ·  " & entries.Count & " 个文件") With {
-                .ForeColor = If(category.Equals("Backend", StringComparison.OrdinalIgnoreCase), UiSuccess, UiText)
+                .ForeColor = If(category.Equals("Backend", StringComparison.OrdinalIgnoreCase), UiSuccess, UiText),
+                .IsCollapsed = True
             }
             _downloadList.Groups.Add(group)
 
@@ -4102,68 +4162,153 @@ Namespace videoenhancer
             page.Dock = DockStyle.Fill
             page.BackColor = Color.Transparent
             page.Padding = New Padding(0, 8, 0, 0)
-            ' WebBrowser 初始化会加载系统浏览器引擎，延迟到用户首次打开对应选项卡，
-            ' 避免两个教程页阻塞插件首屏布局。
-            _markdownSources(page) = If(markdown, "")
-        End Sub
-
-        Private Sub EnsureMarkdownPage(page As Panel)
-            If page Is Nothing OrElse _markdownReady.Contains(page) Then Return
-            Dim markdown As String = ""
-            If Not _markdownSources.TryGetValue(page, markdown) Then Return
-            Dim browser As New WebBrowser With {
-                .Dock = DockStyle.Fill, .AllowWebBrowserDrop = False,
-                .IsWebBrowserContextMenuEnabled = False, .WebBrowserShortcutsEnabled = False,
-                .ScriptErrorsSuppressed = True, .ScrollBarsEnabled = True
+            Dim viewer As New MarkDownViewer With {
+                .Dock = DockStyle.Fill,
+                .BackColor1 = Color.FromArgb(20, 220, 220, 220),
+                .BackgroundSource = page,
+                .BorderRadius = 10,
+                .Padding = New Padding(20),
+                .Font = New Font("Microsoft YaHei UI", 10.0F),
+                .HeadingColor = UiText,
+                .BlockQuoteForeColor = UiTextMuted,
+                .Text = If(markdown, "")
             }
-            browser.DocumentText = MarkdownDocument(markdown)
-            page.Controls.Add(browser)
-            _markdownReady.Add(page)
+            page.Controls.Add(viewer)
         End Sub
 
-        Private Shared Function MarkdownDocument(markdown As String) As String
-            Dim body As New StringBuilder()
-            Dim inList = False
-            Dim lineFeed As Char = Convert.ToChar(10)
-            For Each raw As String In If(markdown, "").Replace(Environment.NewLine, lineFeed.ToString()).Split(New Char() {lineFeed})
-                Dim line = raw.TrimEnd()
-                If line.StartsWith("### ") Then
-                    If inList Then body.Append("</ul>") : inList = False
-                    body.Append("<h3>").Append(InlineMarkdown(line.Substring(4))).Append("</h3>")
-                ElseIf line.StartsWith("## ") Then
-                    If inList Then body.Append("</ul>") : inList = False
-                    body.Append("<h2>").Append(InlineMarkdown(line.Substring(3))).Append("</h2>")
-                ElseIf line.StartsWith("# ") Then
-                    If inList Then body.Append("</ul>") : inList = False
-                    body.Append("<h1>").Append(InlineMarkdown(line.Substring(2))).Append("</h1>")
-                ElseIf line.StartsWith("- ") OrElse line.StartsWith("* ") Then
-                    If Not inList Then body.Append("<ul>") : inList = True
-                    body.Append("<li>").Append(InlineMarkdown(line.Substring(2))).Append("</li>")
-                ElseIf String.IsNullOrWhiteSpace(line) Then
-                    If inList Then body.Append("</ul>") : inList = False
-                Else
-                    If inList Then body.Append("</ul>") : inList = False
-                    body.Append("<p>").Append(InlineMarkdown(line)).Append("</p>")
-                End If
-            Next
-            If inList Then body.Append("</ul>")
-            Return "<!doctype html><html><head><meta charset='utf-8'><style>" &
-                "html{background:#181818;scrollbar-face-color:#454545;scrollbar-track-color:#181818;scrollbar-arrow-color:#888;}" &
-                "body{box-sizing:border-box;max-width:1080px;background:#181818;color:#989898;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;margin:0;padding:14px 10px 38px;}" &
-                "h1{font-size:21px;font-weight:400;color:#dcdcdc;margin:0 0 16px;padding:0;}" &
-                "h2{font-size:16px;font-weight:400;color:#d0d0d0;margin:18px 0 8px;}h3{font-size:15px;color:#c8c8c8;}" &
-                "p,li{font-size:13px;line-height:1.65;}p{margin:4px 0 10px;}ul{padding:0 0 0 24px;margin:4px 0 12px;}" &
-                "li{padding:2px 0;}strong{color:#dcdcdc}code{background:#383838;padding:3px 6px;border-radius:5px;color:#9bc8ff}a{color:#479cff;}" &
-                "::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#181818}::-webkit-scrollbar-thumb{background:#484848;border-radius:4px}</style></head><body>" &
-                body.ToString() & "</body></html>"
+        Private Sub BuildTutorialPage()
+            _pageTutorial.Dock = DockStyle.Fill
+            _pageTutorial.BackColor = Color.Transparent
+            _pageTutorial.Padding = New Padding(0, 8, 0, 0)
+
+            Dim root As New TableLayoutPanel With {
+                .Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2,
+                .BackColor = Color.Transparent, .Margin = Padding.Empty, .Padding = Padding.Empty
+            }
+            root.RowStyles.Add(New RowStyle(SizeType.Absolute, 54.0F))
+            root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+            Dim searchBar As New TableLayoutPanel With {
+                .Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1,
+                .BackColor = Color.Transparent, .Margin = Padding.Empty,
+                .Padding = New Padding(0, 4, 0, 6)
+            }
+            searchBar.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+            searchBar.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 132.0F))
+            searchBar.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+            _tutorialAddress.Text = TutorialHome
+            _tutorialAddress.WaterText = "输入 GitHub 上的 Markdown 地址或仓库内路径…"
+            _tutorialAddress.Dock = DockStyle.Fill
+            _tutorialAddress.Margin = New Padding(0, 0, 10, 0)
+            _tutorialAddress.Padding = New Padding(12, 0, 12, 0)
+            _tutorialAddress.BackColor1 = Color.FromArgb(40, 220, 220, 220)
+            _tutorialAddress.BorderSize = 0
+            _tutorialAddress.BorderRadius = 8
+            AddHandler _tutorialAddress.KeyDown, AddressOf OnTutorialAddressKeyDown
+
+            _tutorialLoadButton.Text = "加载教程"
+            _tutorialLoadButton.Dock = DockStyle.Fill
+            _tutorialLoadButton.Margin = Padding.Empty
+            ConfigurePrimaryButton(_tutorialLoadButton)
+            AddHandler _tutorialLoadButton.Click, AddressOf OnTutorialLoadClick
+
+            _tutorialViewer.Dock = DockStyle.Fill
+            _tutorialViewer.Margin = Padding.Empty
+            _tutorialViewer.Padding = New Padding(20)
+            _tutorialViewer.BackColor1 = Color.FromArgb(20, 220, 220, 220)
+            _tutorialViewer.BackgroundSource = _pageTutorial
+            _tutorialViewer.BorderRadius = 10
+            _tutorialViewer.Font = New Font("Microsoft YaHei UI", 10.0F)
+            _tutorialViewer.HeadingColor = UiText
+            _tutorialViewer.BlockQuoteForeColor = UiTextMuted
+            _tutorialViewer.Text = "# 使用教程" & Environment.NewLine & Environment.NewLine & "正在等待从 GitHub 加载…"
+
+            searchBar.Controls.Add(_tutorialAddress, 0, 0)
+            searchBar.Controls.Add(_tutorialLoadButton, 1, 0)
+            root.Controls.Add(searchBar, 0, 0)
+            root.Controls.Add(_tutorialViewer, 0, 1)
+            _pageTutorial.Controls.Add(root)
+        End Sub
+
+        Private Sub OnTutorialAddressKeyDown(sender As Object, e As KeyEventArgs)
+            If e.KeyCode <> Keys.Enter Then Return
+            e.SuppressKeyPress = True
+            LoadTutorialMarkdownAsync()
+        End Sub
+
+        Private Sub OnTutorialLoadClick(sender As Object, e As EventArgs)
+            LoadTutorialMarkdownAsync()
+        End Sub
+
+        Private Async Sub LoadTutorialMarkdownAsync()
+            If _tutorialLoading Then Return
+            _tutorialLoading = True
+            _tutorialLoadButton.Enabled = False
+            _tutorialLoadButton.Text = "加载中…"
+            Dim source = _tutorialAddress.Text.Trim()
+            If String.IsNullOrWhiteSpace(source) Then source = TutorialHome
+            Try
+                Dim apiUrl = ResolveTutorialApiUrl(source)
+                Using client As New HttpClient()
+                    client.Timeout = TimeSpan.FromSeconds(30)
+                    Using request As New HttpRequestMessage(HttpMethod.Get, apiUrl)
+                        request.Headers.UserAgent.ParseAdd("VideoEnhancer/1.4.2")
+                        request.Headers.Accept.ParseAdd("application/vnd.github.raw+json")
+                        Using response = Await client.SendAsync(request)
+                            response.EnsureSuccessStatusCode()
+                            Dim markdown = Await response.Content.ReadAsStringAsync()
+                            If String.IsNullOrWhiteSpace(markdown) Then Throw New InvalidOperationException("GitHub 返回了空文档")
+                            _tutorialViewer.BasePath = apiUrl
+                            _tutorialViewer.Text = markdown
+                            _tutorialLoaded = True
+                            ShowStatus("教程已从 GitHub 更新", False)
+                        End Using
+                    End Using
+                End Using
+            Catch ex As Exception
+                _tutorialViewer.Text = "# 教程加载失败" & Environment.NewLine & Environment.NewLine &
+                    "无法从 GitHub 获取该 Markdown 文档。" & Environment.NewLine & Environment.NewLine &
+                    "`" & ex.Message & "`"
+                ShowStatus("教程加载失败：" & ex.Message, True)
+            Finally
+                _tutorialLoading = False
+                _tutorialLoadButton.Enabled = True
+                _tutorialLoadButton.Text = "加载教程"
+            End Try
+        End Sub
+
+        Private Shared Function ResolveTutorialApiUrl(source As String) As String
+            Dim value = If(source, "").Trim()
+            If value = "" Then value = TutorialHome
+            If Not value.Contains("://") Then
+                Return "https://api.github.com/repos/user-Wing/VideoEnhancer/contents/" & EncodeGitHubPath(value) & "?ref=main"
+            End If
+
+            Dim uri As Uri = Nothing
+            If Not Uri.TryCreate(value, UriKind.Absolute, uri) OrElse uri.Scheme <> Uri.UriSchemeHttps Then
+                Throw New InvalidOperationException("请输入有效的 HTTPS GitHub 地址")
+            End If
+            Dim host = uri.Host.ToLowerInvariant()
+            If host = "api.github.com" Then Return uri.AbsoluteUri
+
+            Dim parts = Uri.UnescapeDataString(uri.AbsolutePath).Trim("/"c).Split("/"c)
+            If host = "github.com" AndAlso parts.Length >= 5 AndAlso parts(2).Equals("blob", StringComparison.OrdinalIgnoreCase) Then
+                Dim documentPath = String.Join("/", parts.Skip(4))
+                Return "https://api.github.com/repos/" & Uri.EscapeDataString(parts(0)) & "/" & Uri.EscapeDataString(parts(1)) &
+                    "/contents/" & EncodeGitHubPath(documentPath) & "?ref=" & Uri.EscapeDataString(parts(3))
+            End If
+            If host = "raw.githubusercontent.com" AndAlso parts.Length >= 4 Then
+                Dim documentPath = String.Join("/", parts.Skip(3))
+                Return "https://api.github.com/repos/" & Uri.EscapeDataString(parts(0)) & "/" & Uri.EscapeDataString(parts(1)) &
+                    "/contents/" & EncodeGitHubPath(documentPath) & "?ref=" & Uri.EscapeDataString(parts(2))
+            End If
+            Throw New InvalidOperationException("仅支持 GitHub Markdown、Raw 或 Contents API 地址")
         End Function
 
-        Private Shared Function InlineMarkdown(text As String) As String
-            Dim value = System.Net.WebUtility.HtmlEncode(If(text, ""))
-            value = Regex.Replace(value, "\*\*(.+?)\*\*", "<strong>$1</strong>")
-            value = Regex.Replace(value, "`(.+?)`", "<code>$1</code>")
-            value = Regex.Replace(value, "\[(.+?)\]\((https?://[^\s)]+)\)", "<a href='$2'>$1</a>")
-            Return value
+        Private Shared Function EncodeGitHubPath(pathValue As String) As String
+            Return String.Join("/", If(pathValue, "").Replace("\"c, "/"c).Trim("/"c).
+                Split("/"c).Where(Function(part) part <> "").Select(Function(part) Uri.EscapeDataString(part)))
         End Function
 
         Private Sub BuildConverterPage()
@@ -4662,10 +4807,8 @@ Namespace videoenhancer
             If _engine IsNot Nothing Then
                 _engine.PreviewVisible = (_tabs.SelectedIndex = 1)
             End If
-            If _tabs.SelectedIndex = 5 Then
-                EnsureMarkdownPage(_pageModelInfo)
-            ElseIf _tabs.SelectedIndex = 6 Then
-                EnsureMarkdownPage(_pageTutorial)
+            If _tabs.SelectedIndex = 6 AndAlso Not _tutorialLoaded AndAlso Not _tutorialLoading Then
+                LoadTutorialMarkdownAsync()
             End If
             ' 切换页面时清除底部状态提示
             ClearStatus()
@@ -4848,12 +4991,12 @@ Namespace videoenhancer
             End If
         End Sub
 
-        ''' <summary>把配置的推理后端同步到下拉框（0=NCNN，1=CUDA，2=TensorRT，3=ONNX，4=FlashVSR）。</summary>
+        ''' <summary>把配置的推理后端同步到下拉框（0=NCNN，1=CUDA，2=TensorRT，3=ONNX，4=FlashVSR，5=BasicVSR++）。</summary>
         Private Sub SyncBackendCombo()
             If _cmbBackend.Items.Count = 0 Then
                 Return
             End If
-            _cmbBackend.SelectedIndex = If(_config.Backend = "flashvsr", 4, If(_config.Backend = "onnx", 3, If(_config.Backend = "tensorrt", 2, If(_config.Backend = "cuda", 1, 0))))
+            _cmbBackend.SelectedIndex = If(_config.Backend = "basicvsrpp", 5, If(_config.Backend = "flashvsr", 4, If(_config.Backend = "onnx", 3, If(_config.Backend = "tensorrt", 2, If(_config.Backend = "cuda", 1, 0)))))
         End Sub
 
         ''' <summary>把配置的补帧倍率同步到下拉框（2/3/4/8）。</summary>
