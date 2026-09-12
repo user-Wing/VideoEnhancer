@@ -1,15 +1,15 @@
 # Project Status
 
-Last updated: 2026-09-12 10:47
+Last updated: 2026-09-12 12:55
 Updated by: Codex
 
 ## Current Snapshot
 
-- Current objective: 保留已完成并部署的 VideoEnhancer 1.3.0 本地开发结果，等待用户重新启动 3FUI 验证新增的分段超分页，再决定后续 Git 与发布动作。
-- Current state: RTX VSR / RTX Video HDR、Windows 图片右键超分（含逐项删除）、FlashVSR / BasicVSR++ 图片桥、图片“移除所有”和分段超分均已实现；最终 EXE/DLL/分段后端已部署到便携 3FUI，关键实跑、构建和 22 项测试通过。此前页面由用户手动确认无问题，本轮新增分段页尚待用户重启后目视确认。版本仍为本地开发状态，未提交、未推送、未发布。
+- Current objective: 保留已完成、部署并同步的 VideoEnhancer 1.3.0 开发结果，等待 maxzrb 审查合并 PR，并由用户重新启动 3FUI 验证新增的分段超分页。
+- Current state: RTX VSR / RTX Video HDR、Windows 图片右键超分（含逐项删除）、FlashVSR / BasicVSR++ 图片桥、图片“移除所有”和分段超分均已实现；最终 EXE/DLL/分段后端已部署到便携 3FUI，关键实跑、构建和 22 项测试通过。源码分支已推送到 `user-Wing/VideoEnhancer`，PR `maxzrb/VideoEnhancer#1` 已打开；`user-Wing/main` 已用保留双方历史的合并提交直接更新。版本未发布。
 - Last active agent: Codex
 - Likely next agent: user / Codex / ZCode
-- Next recommended step: 用户重新启动 3FUI，检查“分段超分”页的视频识别、分段增删与模型锁定；确认后再单独决定 Git 分支整理、提交或发布。RTX SDK 文件进入公开发行资产前复核 NVIDIA 许可。本轮继续保持不执行 Git 操作。
+- Next recommended step: maxzrb 审查并合并 PR #1；用户重新启动 3FUI，检查“分段超分”页的视频识别、分段增删与模型锁定。RTX SDK 文件进入公开发行资产前复核 NVIDIA 许可，确认后再决定是否正式发布 1.3.0。
 
 ## Active TODO
 
@@ -18,7 +18,7 @@ Updated by: Codex
   - Status: RTX sidecar、分辨率映射、HDR 兼容门禁、右键超分配置及逐项删除、图片清空、两个时序图片桥和分段超分已实现；最终 1.3.0 EXE/DLL/分段后端已部署到指定便携 3FUI，版本保持 1.3.0。
   - Verification: CLI Release 构建 0 错误（2 个既有 Windows 平台分析警告）；LakeUI 5.9 / FFmpegFreeUI 6.2.16 插件构建通过；Python 22/22；安装版 `--version` 和 RTX 环境检查通过；RTX VSR 320×180→640×360；RTX HDR 输出 HEVC Main10 BT.2020/PQ；BasicVSR++ 64×48→256×192；FlashVSR 64×64→256×256；两帧视频分别用两个 NCNN 模型处理并由同一 FFmpeg 输出为 256×256/2 帧，非法重复边界及混合倍率均被拒绝；用户已确认此前真实 3FUI UI 无问题，本轮新增分段页待重启后目视确认。
   - Blockers: 本地开发与部署无阻塞。RTX SDK 组件公开再分发前需复核 NVIDIA 许可；右键菜单必须由用户在“右键超分”页选择模型后主动点击“应用设置”，本轮未代为写入注册表。
-  - Git: 用户明确要求本轮不执行 Git 操作，因此分支、未提交文件和工作树清洁度未知。
+  - Git: 功能提交 `9551296` 已推送至 `user-Wing/VideoEnhancer:feat/rtx-segmented-upscale-1.3.0`；已创建 `maxzrb/VideoEnhancer#1`。`user-Wing/main` 通过双父合并提交 `becc929` 保留原有历史并采用 maxzrb 维护线文件树，没有强推。
   - Relevant files: `cli/Program.cs`, `cli/RtxVideoBackendClient.cs`, `cli/embedded-tools/rve-image-backend.py`, `cli/embedded-tools/rve-segmented-backend.py`, `VideoEnhancerPlugin/PluginPanel.vb`, `VideoEnhancerPlugin/SegmentedUpscalePage.vb`, `VideoEnhancerPlugin/PluginConfig.vb`, `VideoEnhancerPlugin/QueueHook.vb`, `VideoEnhancerPlugin/ShellUpscaleMenu.vb`
 
 - [x] Task: 按 LakeUI 官方背景映射链修复滚动断层。
@@ -1679,3 +1679,10 @@ Append new entries below this line. Use `YYYY-MM-DD HH:MM` so same-day work rema
 - Feasibility/verification: 两帧验证视频分别使用 AnimeJaNai 2x 和 RealESRGAN AnimeVideoV3 2x，源码构建、trimmed publish 与安装版 EXE 均成功输出 256×256、2 帧视频；重复/缺口边界与混合倍率均按预期拒绝。CLI/插件重新构建通过，Python 全量测试 22/22。
 - Deployment: 用户退出 3FUI 后覆盖最终文件。EXE 源/目标均为 16,919,192 bytes、SHA-256 `2E75BF83CEFF8B24A9228EBD61876923E7C30AF4FE4D8B417006C53726B0C9A8`；DLL 源/目标均为 4,654,592 bytes、SHA-256 `9F1BF2328BACAB8A7A86C7F3318BD3543DBB0655BE71C348F86785B9AF889FCD`；分段后端源/目标 SHA-256 均为 `2B972FDC115518EE8C3BCCD0552E23DDD062F3E6AA00A2D39E07948BB9BF9C41`。安装版仍报告 1.3.0，部署后未代为启动宿主。
 - Backup/Git: 覆盖前备份位于 `%LocalAppData%\Temp\videoenhancer-1.3.0-segment-backup-20260912-103000`。本轮没有执行任何 Git 命令，未提交、推送或发布。
+
+### 2026-09-12 12:55 - Codex
+
+- Repository relationship: 确认 `user-Wing/VideoEnhancer` 是父仓库，`maxzrb/VideoEnhancer` 是当前主要维护 fork。本地基线与 `maxzrb/main` 一致；同步前两边 main 已分叉，maxzrb 独有 62 个提交、user-Wing 独有 5 个提交。
+- Commit/PR: 将 1.3.0 更新提交为 `9551296 feat: add RTX and segmented upscale workflows`，推送至 `user-Wing/VideoEnhancer:feat/rtx-segmented-upscale-1.3.0`；向 `maxzrb/VideoEnhancer:main` 创建 PR #1：`https://github.com/maxzrb/VideoEnhancer/pull/1`。
+- Direct user-Wing update: 为避免强推覆盖 user-Wing 的独有历史，以功能提交和旧 `user-Wing/main` 为双父创建 `becc929 merge: sync user-Wing with maxzrb 1.3.0 maintenance line`。合并树与功能提交逐字节一致，随后从 `cbfda2f` 快进推送到 `user-Wing/main`；双方历史均保持可达，当前文件内容以 maxzrb 维护线为准。
+- Scope: Git 提交仅包含 18 个本次功能/测试/文档文件；未包含 EXE、DLL、INI、Python 缓存、临时验证素材或安装目录文件。版本保持 1.3.0，未创建标签、Release 或发布资产。
